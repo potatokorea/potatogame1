@@ -7,13 +7,16 @@
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        html, body {
+            height: 100%; /* Ensure html and body take full viewport height */
+        }
         body {
             font-family: 'Inter', sans-serif;
             background-color: #1a202c; /* Dark background for game feel */
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 100vh;
+            min-height: 100vh; /* Fallback for older browsers, but html/body height is primary */
             margin: 0;
             overflow: hidden; /* Prevent scrollbars */
             -webkit-touch-callout: none; /* Disable callout on long press */
@@ -31,19 +34,22 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            width: 98vw; /* Take more viewport width */
-            height: 98vh; /* Take more viewport height */
+            width: 98vw; /* Take 98% of viewport width */
             max-width: 900px; /* Max width for larger screens */
-            max-height: 800px; /* Max height for larger screens */
+            height: auto; /* Allow height to adjust based on content */
+            max-height: 98vh; /* Ensure it doesn't exceed viewport height */
             box-sizing: border-box;
             justify-content: space-between;
             color: #e2e8f0; /* Light text color */
+            flex-grow: 1; /* Allow container to grow within body */
+            overflow-y: auto; /* Allow scrolling if content exceeds max-height */
         }
         h1 {
             color: #63b3ed; /* Blue title */
             font-size: 2.5rem;
             margin-bottom: 1.5rem;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            flex-shrink: 0; /* Prevent shrinking */
         }
         .game-area {
             display: flex;
@@ -53,6 +59,7 @@
             width: 100%;
             justify-content: center;
             align-items: flex-start; /* Align items to the top */
+            min-height: 0; /* Important for flex items in a column container */
         }
         canvas {
             background-color: #000000; /* Black game board */
@@ -61,6 +68,7 @@
             border: 4px solid #4a5568; /* Darker border */
             touch-action: none; /* Disable default touch actions */
             flex-shrink: 0; /* Prevent shrinking */
+            /* Canvas dimensions will be set by JS */
         }
         .sidebar {
             display: flex;
@@ -98,7 +106,7 @@
             flex-wrap: wrap; /* Allow buttons to wrap on smaller screens */
             justify-content: center;
             margin-top: 1.5rem;
-            flex-shrink: 0;
+            flex-shrink: 0; /* Prevent shrinking */
         }
         .game-button {
             background-color: #63b3ed; /* Blue button */
@@ -685,36 +693,59 @@
 
         // Responsive canvas resizing
         function resizeGameCanvas() {
+            const gameContainer = document.querySelector('.game-container');
             const gameArea = document.querySelector('.game-area');
-            const availableWidth = gameArea.clientWidth;
-            const availableHeight = gameArea.clientHeight;
+            const sidebar = document.querySelector('.sidebar');
+            const gameControls = document.querySelector('.game-controls');
+            const h1 = document.querySelector('h1');
 
+            // Calculate available height for the game area, considering other elements
+            // This is crucial for mobile to ensure buttons are visible.
+            let verticalSpaceUsed = 0;
+            if (h1) verticalSpaceUsed += h1.offsetHeight + parseFloat(getComputedStyle(h1).marginBottom);
+            if (gameControls) verticalSpaceUsed += gameControls.offsetHeight + parseFloat(getComputedStyle(gameControls).marginTop);
+            
+            // Account for game-container's padding
+            const containerPaddingVertical = parseFloat(getComputedStyle(gameContainer).paddingTop) + parseFloat(getComputedStyle(gameContainer).paddingBottom);
+            verticalSpaceUsed += containerPaddingVertical;
+
+            const availableHeightForGameArea = gameContainer.clientHeight - verticalSpaceUsed;
+
+            let availableWidthForMainCanvas = gameArea.clientWidth; // Default to full width of game-area
+            
+            // If sidebar is displayed side-by-side (desktop view)
+            if (window.innerWidth > 768) { // Based on media query breakpoint
+                availableWidthForMainCanvas -= (sidebar.offsetWidth + parseFloat(getComputedStyle(gameArea).gap));
+            }
+            
             // Calculate max possible BLOCK_SIZE based on available space
-            // We want to fit COLS and ROWS blocks
-            const maxBlockSizeByWidth = Math.floor(availableWidth / COLS);
-            const maxBlockSizeByHeight = Math.floor(availableHeight / ROWS);
+            const maxBlockSizeByWidth = Math.floor(availableWidthForMainCanvas / COLS);
+            const maxBlockSizeByHeight = Math.floor(availableHeightForGameArea / ROWS);
 
             // Use the smaller of the two to ensure it fits both dimensions
-            const newBlockSize = Math.min(maxBlockSizeByWidth, maxBlockSizeByHeight);
+            let newBlockSize = Math.min(maxBlockSizeByWidth, maxBlockSizeByHeight);
+            
+            // Ensure BLOCK_SIZE doesn't go too small
+            BLOCK_SIZE = Math.max(10, newBlockSize);
 
             // Set canvas dimensions based on new BLOCK_SIZE
-            gameCanvas.width = COLS * newBlockSize;
-            gameCanvas.height = ROWS * newBlockSize;
+            gameCanvas.width = COLS * BLOCK_SIZE;
+            gameCanvas.height = ROWS * BLOCK_SIZE;
 
-            // Update global BLOCK_SIZE for drawing
-            BLOCK_SIZE = newBlockSize;
-
-            // Adjust nextPieceCanvas size
+            // Adjust nextPieceCanvas size based on the new BLOCK_SIZE
             nextPieceCanvas.width = BLOCK_SIZE * 4; // Assuming max 4x4 for next piece
             nextPieceCanvas.height = BLOCK_SIZE * 4;
 
             // Redraw everything if game is not running (e.g., initial load, reset)
-            if (!gameRunning) {
-                gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
-                drawBoard();
+            // Or if game is running, redraw to update scaling
+            gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+            drawBoard();
+            if (currentPiece) { // Ensure currentPiece exists before drawing
+                const ghostPiece = getGhostPiece();
+                drawPiece(ghostPiece, gameCtx, 0, 0, true);
                 drawPiece(currentPiece, gameCtx);
-                drawNextPiece();
             }
+            drawNextPiece();
         }
 
         // Initial setup
@@ -726,14 +757,7 @@
         window.addEventListener('resize', () => {
             resizeGameCanvas();
             // Redraw everything on resize, even if game is running, to ensure proper scaling
-            if (gameRunning) {
-                gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
-                drawBoard();
-                const ghostPiece = getGhostPiece(); // Get ghost piece position
-                drawPiece(ghostPiece, gameCtx, 0, 0, true); // Draw ghost piece
-                drawPiece(currentPiece, gameCtx); // Draw actual piece
-                drawNextPiece();
-            }
+            // This is handled inside resizeGameCanvas now.
         });
 
     </script>
